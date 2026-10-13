@@ -6,10 +6,11 @@ real DCGM-backed GPU metrics, an NCCL bandwidth exporter, Prometheus, and
 Grafana (two auto-provisioned dashboards).
 
 Demo video (both Grafana dashboards live during a benchmark run):
+[`demo.mp4`](demo.mp4)
 
-<video src="demo.webm" controls width="720">
-  Your viewer doesn't support inline video - open <a href="demo.webm">demo.webm</a> directly.
-</video>
+> GitHub's README renderer doesn't play raw `<video>` tags or arbitrary
+> committed video files inline - open the link above, or drag-and-drop
+> `demo.mp4` into a GitHub comment/PR/discussion to get an inline player.
 
 ## Layout
 
