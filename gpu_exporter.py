@@ -23,7 +23,14 @@ DCGM_FIELDS = {
     "155": "power_draw_watts",
     "203": "utilization_gpu_percent",
     "252": "memory_used_mib",
-    "254": "memory_free_mib",
+    # Real bug found + fixed: field 254 is FBUSP (FB Used Percent, a 0-1
+    # fraction - e.g. 0.915 for 91.5% used), NOT free memory in MiB. The
+    # correct field for free framebuffer MiB is 251 (FBFRE) - confirmed via
+    # a real `dcgmi dmon -e 252,251,254 -c 1` run (FBUSD=13638, FBFRE=1272,
+    # FBUSP=0.915 on this host). The old 254 mapping made every "free"
+    # reading read as ~0-1 instead of a real MiB value, which skewed the
+    # GPU Memory Used (%) gauge and the used/free timeseries panel.
+    "251": "memory_free_mib",
     "100": "sm_clock_mhz",
     "101": "memory_clock_mhz",
     "237": "pcie_link_gen",
