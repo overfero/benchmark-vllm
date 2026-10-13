@@ -5,12 +5,13 @@ vLLM serve, a browser chat dashboard (SSE streaming), GuideLLM load testing,
 real DCGM-backed GPU metrics, an NCCL bandwidth exporter, Prometheus, and
 Grafana (two auto-provisioned dashboards).
 
-Demo video (both Grafana dashboards live during a benchmark run):
-[`demo.mp4`](demo.mp4)
+Demo (both Grafana dashboards live during a benchmark run):
 
-> GitHub's README renderer doesn't play raw `<video>` tags or arbitrary
-> committed video files inline - open the link above, or drag-and-drop
-> `demo.mp4` into a GitHub comment/PR/discussion to get an inline player.
+![demo](demo.gif)
+
+Full-quality version: [`demo.mp4`](demo.mp4) - GitHub's README renderer
+doesn't play raw `<video>` tags or committed video files inline, so the GIF
+above is what actually renders; open the mp4 link for full resolution/audio.
 
 ## Layout
 
