@@ -6,7 +6,10 @@ real DCGM-backed GPU metrics, an NCCL bandwidth exporter, Prometheus, and
 Grafana (two auto-provisioned dashboards).
 
 Demo video (both Grafana dashboards live during a benchmark run):
-[`demo.webm`](demo.webm)
+
+<video src="demo.webm" controls width="720">
+  Your viewer doesn't support inline video - open <a href="demo.webm">demo.webm</a> directly.
+</video>
 
 ## Layout
 
