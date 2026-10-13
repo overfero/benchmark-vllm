@@ -1,0 +1,229 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "gpu-dcgm-overview",
+    "title": "GPU Overview (DCGM)",
+    "tags": ["gpu", "dcgm"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 0,
+    "refresh": "10s",
+    "time": { "from": "now-30m", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "title": "GPU Utilization (%)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": {
+          "defaults": { "unit": "percent", "min": 0, "max": 100 },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "expr": "dcgm_gpu_utilization_gpu_percent",
+            "legendFormat": "GPU {{gpu}}",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "GPU Temperature (°C)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": {
+          "defaults": { "unit": "celsius" },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "expr": "dcgm_gpu_temperature_celsius",
+            "legendFormat": "GPU {{gpu}}",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "GPU Power Draw (W)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": {
+          "defaults": { "unit": "watt" },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "expr": "dcgm_gpu_power_draw_watts",
+            "legendFormat": "GPU {{gpu}}",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "GPU Memory Used (MiB)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": {
+          "defaults": { "unit": "decmbytes" },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "expr": "dcgm_gpu_memory_used_mib",
+            "legendFormat": "GPU {{gpu}} used",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          },
+          {
+            "expr": "dcgm_gpu_memory_free_mib",
+            "legendFormat": "GPU {{gpu}} free",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "GPU Memory Used (%)",
+        "type": "gauge",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": {
+          "defaults": { "unit": "percent", "min": 0, "max": 100,
+            "thresholds": { "mode": "absolute", "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 90 }
+            ] }
+          },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "expr": "dcgm_gpu_memory_used_mib / (dcgm_gpu_memory_used_mib + dcgm_gpu_memory_free_mib) * 100",
+            "legendFormat": "GPU {{gpu}}",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "vLLM: Running + Waiting Requests",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          {
+            "expr": "vllm:num_requests_running",
+            "legendFormat": "running",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          },
+          {
+            "expr": "vllm:num_requests_waiting",
+            "legendFormat": "waiting",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "NCCL all_reduce Bus Bandwidth (GB/s, largest msg size, periodic)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          {
+            "expr": "nccl_allreduce_out_of_place_busbw_gbps",
+            "legendFormat": "out-of-place",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          },
+          {
+            "expr": "nccl_allreduce_in_place_busbw_gbps",
+            "legendFormat": "in-place",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "NCCL Last Run Status",
+        "type": "stat",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "FAILED" }, "1": { "text": "OK" } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ] }
+          },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "expr": "nccl_allreduce_last_run_ok",
+            "legendFormat": "status",
+            "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" }
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "SM Clock (MHz)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "dcgm_gpu_sm_clock_mhz", "legendFormat": "GPU {{gpu}} SM clock", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "Memory Clock (MHz)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "dcgm_gpu_memory_clock_mhz", "legendFormat": "GPU {{gpu}} mem clock", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Power / Thermal Throttle Violations",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "dcgm_gpu_power_violation", "legendFormat": "GPU {{gpu}} power violation", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "dcgm_gpu_thermal_violation", "legendFormat": "GPU {{gpu}} thermal violation", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "PCIe Link (Gen / Width) - negotiated hardware spec",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 24, "x": 0, "y": 48 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "dcgm_gpu_pcie_link_gen", "legendFormat": "GPU {{gpu}} PCIe Gen", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "dcgm_gpu_pcie_link_width", "legendFormat": "GPU {{gpu}} PCIe Width (x)", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

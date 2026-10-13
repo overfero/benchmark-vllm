@@ -1,0 +1,167 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "vllm-bench-overview",
+    "title": "vLLM Benchmark Overview",
+    "tags": ["vllm", "benchmark"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 0,
+    "refresh": "10s",
+    "time": { "from": "now-30m", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "title": "TTFT (Time to First Token, p50/p95/p99)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+        "targets": [
+          { "expr": "histogram_quantile(0.5, rate(vllm:time_to_first_token_seconds_bucket[1m]))", "legendFormat": "p50", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.95, rate(vllm:time_to_first_token_seconds_bucket[1m]))", "legendFormat": "p95", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.99, rate(vllm:time_to_first_token_seconds_bucket[1m]))", "legendFormat": "p99", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Inter-Token Latency / TPOT (p50/p95/p99)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+        "targets": [
+          { "expr": "histogram_quantile(0.5, rate(vllm:inter_token_latency_seconds_bucket[1m]))", "legendFormat": "p50", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.95, rate(vllm:inter_token_latency_seconds_bucket[1m]))", "legendFormat": "p95", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.99, rate(vllm:inter_token_latency_seconds_bucket[1m]))", "legendFormat": "p99", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Prefill Throughput (tokens/sec)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "rate(vllm:prompt_tokens_total[1m])", "legendFormat": "prefill TPS", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Decode Throughput (tokens/sec)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "rate(vllm:generation_tokens_total[1m])", "legendFormat": "decode TPS", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Prefill Time (p50/p95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+        "targets": [
+          { "expr": "histogram_quantile(0.5, rate(vllm:request_prefill_time_seconds_bucket[1m]))", "legendFormat": "p50", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.95, rate(vllm:request_prefill_time_seconds_bucket[1m]))", "legendFormat": "p95", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Decode Time (p50/p95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+        "targets": [
+          { "expr": "histogram_quantile(0.5, rate(vllm:request_decode_time_seconds_bucket[1m]))", "legendFormat": "p50", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.95, rate(vllm:request_decode_time_seconds_bucket[1m]))", "legendFormat": "p95", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "KV Cache Usage (%)",
+        "type": "gauge",
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": {
+          "defaults": { "unit": "percentunit", "min": 0, "max": 1,
+            "thresholds": { "mode": "absolute", "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ] } },
+          "overrides": []
+        },
+        "targets": [
+          { "expr": "vllm:kv_cache_usage_perc", "legendFormat": "KV cache", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Running + Waiting Requests",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "vllm:num_requests_running", "legendFormat": "running", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "vllm:num_requests_waiting", "legendFormat": "waiting", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Queue Time (p50/p95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+        "targets": [
+          { "expr": "histogram_quantile(0.5, rate(vllm:request_queue_time_seconds_bucket[1m]))", "legendFormat": "p50", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.95, rate(vllm:request_queue_time_seconds_bucket[1m]))", "legendFormat": "p95", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "E2E Request Latency (p50/p95/p99)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+        "targets": [
+          { "expr": "histogram_quantile(0.5, rate(vllm:e2e_request_latency_seconds_bucket[1m]))", "legendFormat": "p50", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.95, rate(vllm:e2e_request_latency_seconds_bucket[1m]))", "legendFormat": "p95", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "histogram_quantile(0.99, rate(vllm:e2e_request_latency_seconds_bucket[1m]))", "legendFormat": "p99", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "MTP Speculative Decode Acceptance Rate",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+        "targets": [
+          { "expr": "rate(vllm:spec_decode_num_accepted_tokens_total[1m]) / rate(vllm:spec_decode_num_draft_tokens_total[1m])", "legendFormat": "acceptance rate", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Preemptions & Prefix Cache Hit Rate",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+        "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" },
+        "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+        "targets": [
+          { "expr": "rate(vllm:num_preemptions_total[1m])", "legendFormat": "preemptions/s", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } },
+          { "expr": "rate(vllm:prefix_cache_hits_total[1m]) / rate(vllm:prefix_cache_queries_total[1m])", "legendFormat": "prefix cache hit rate", "datasource": { "type": "prometheus", "uid": "PROM_DS_UID" } }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

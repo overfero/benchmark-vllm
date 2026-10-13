@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: "vllm"
+    static_configs:
+      - targets: ["localhost:8000"]
+    metrics_path: /metrics
+
+  - job_name: "gpu"
+    static_configs:
+      - targets: ["localhost:9400"]
+    metrics_path: /metrics
+
+  - job_name: "nccl"
+    static_configs:
+      - targets: ["localhost:9401"]
+    metrics_path: /metrics
