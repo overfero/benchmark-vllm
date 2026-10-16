@@ -1,0 +1,52 @@
+# Keycloak OIDC in front of the chat dashboard - this is where Keycloak
+# actually belongs in this architecture, NOT in front of the /v1/* API
+# (Envoy Gateway's SecurityPolicy OIDC does a browser redirect/cookie flow,
+# which would break programmatic Bearer-token API clients like curl/
+# LiteLLM SDK callers - the API already has its own correct auth via
+# LiteLLM's masterkey). A human opening the dashboard in a browser is
+# exactly the OIDC redirect flow's intended use case.
+#
+# Realm "chat-ui", client "chat-dashboard", and a demo user were created
+# via Keycloak's Admin REST API (not through this file - no bootstrap
+# script committed here since it handles a one-time secret exchange; redo
+# via `keycloak-service.keycloak.svc.cluster.local:8080/admin/realms` if
+# this realm is ever deleted).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: chat-dashboard-route
+  namespace: litellm
+spec:
+  parentRefs:
+    - name: litellm-gateway
+  hostnames:
+    - "chat.local"
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: chat-ui-external
+          port: 8080
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: chat-dashboard-oidc
+  namespace: litellm
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: chat-dashboard-route
+  oidc:
+    provider:
+      issuer: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/chat-ui"
+    clientID: "chat-dashboard"
+    clientSecret:
+      name: "chat-dashboard-oidc-secret"
+    redirectURL: "http://chat.local/oauth2/callback"
+    logoutPath: "/logout"

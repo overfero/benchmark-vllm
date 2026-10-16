@@ -40,7 +40,15 @@ acquire_lock
 # before the launch even starts (pkill -f matches full argv, which includes
 # the launch command's own text).
 log "stopping any existing vllm_serve screen/process on $HOST_ALIAS..."
-ssh_cmd "screen -S vllm_serve -X quit 2>/dev/null; pkill -f 'vllm serve' 2>/dev/null; true"
+# Real bug hit this session: `pkill -f 'vllm serve'` matches its OWN argv
+# too (the ssh command line itself contains the literal substring "vllm
+# serve" as part of the pkill invocation), killing the shell running the
+# command and making ssh report exit 255 - every single time, 100%
+# reproducible, not a tunnel flake. Standard fix: the [v]llm bracket trick -
+# pkill's own argv then reads "[v]llm serve" (with literal brackets), which
+# the regex "[v]llm serve" does NOT match, while a real orphaned "vllm
+# serve" process (no brackets in its argv) still matches normally.
+ssh_cmd "screen -S vllm_serve -X quit 2>/dev/null; pkill -f '[v]llm serve' 2>/dev/null; true"
 sleep 3
 
 log "writing vLLM launch script..."

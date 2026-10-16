@@ -1,0 +1,82 @@
+# Presidio (PII detection/masking), per the plan's Access & Security phase.
+# Real finding: the old mcr.microsoft.com/presidio-* images are no longer
+# updated - the project's own current docs point at the community fork
+# ghcr.io/data-privacy-stack/presidio-analyzer/anonymizer instead, both
+# listening internally on :3000.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: presidio
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presidio-analyzer
+  namespace: presidio
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: presidio-analyzer }
+  template:
+    metadata:
+      labels: { app: presidio-analyzer }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: overpc
+      containers:
+        - name: presidio-analyzer
+          image: ghcr.io/data-privacy-stack/presidio-analyzer:latest
+          ports:
+            - containerPort: 3000
+          # Real finding: observed usage is 743Mi (spacy NER model loaded at
+          # startup) against a 512Mi request - under-provisioned the same way
+          # litellm was, before the OOM-cascade audit this session caught it.
+          resources:
+            requests: { cpu: 200m, memory: 800Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presidio-analyzer
+  namespace: presidio
+spec:
+  selector: { app: presidio-analyzer }
+  ports:
+    - port: 5002
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presidio-anonymizer
+  namespace: presidio
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: presidio-anonymizer }
+  template:
+    metadata:
+      labels: { app: presidio-anonymizer }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: overpc
+      containers:
+        - name: presidio-anonymizer
+          image: ghcr.io/data-privacy-stack/presidio-anonymizer:latest
+          ports:
+            - containerPort: 3000
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presidio-anonymizer
+  namespace: presidio
+spec:
+  selector: { app: presidio-anonymizer }
+  ports:
+    - port: 5001
+      targetPort: 3000

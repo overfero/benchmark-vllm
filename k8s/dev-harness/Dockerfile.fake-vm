@@ -1,0 +1,46 @@
+# A bare Ubuntu 24.04 + systemd + sshd container that mimics a FRESH
+# Kaggle_Zrok VM's blank state (no conda, no vLLM, no RKE2 - just SSH
+# access as root), so node-bring-up scripts (join_rke2_agent.sh etc.) can
+# be developed and smoke-tested here first, before ever touching the real,
+# quota-limited, flaky Zrok VMs. See the plan's Context section for why.
+#
+# Needs systemd as PID 1 (not just sshd) because RKE2 agent install is a
+# systemd service (`rke2-agent.service`) - a plain sshd-only container
+# can't actually validate that part.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      systemd systemd-sysv openssh-server sudo curl iproute2 iptables \
+      ca-certificates \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    # Mask units that don't make sense/fail inside a container
+    && systemctl mask systemd-udevd.service systemd-udev-trigger.service \
+                       getty.target \
+    && mkdir -p /run/sshd \
+    && echo 'root:fakevm' | chpasswd \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && systemctl enable ssh \
+    && mkdir -p /root/.ssh && chmod 700 /root/.ssh
+
+# Same public key already used for the real Kaggle_Zrok* hosts (kaggle_rsa)
+# so lib/common.sh's ssh_cmd works against these fake nodes with the exact
+# same ~/.ssh/config IdentityFile, no special-casing needed.
+COPY authorized_keys /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys
+
+# Real bug hit validating Cilium's mount-bpf-fs init container here: Docker
+# sets the container's mount namespace to PRIVATE propagation by default,
+# so Cilium's attempt to mount /sys/fs/bpf fails with "is mounted on /sys
+# but it is not a shared mount" even with --privileged. Fix (same pattern
+# kind/k3d use for running Kubernetes nested in Docker): remount / as
+# rshared before handing off to systemd - needs CAP_SYS_ADMIN, which
+# --privileged already grants.
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+STOPSIGNAL SIGRTMIN+3
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/sbin/init"]

@@ -1,0 +1,302 @@
+# Full security-layer simulation stack, Docker Compose edition - same
+# images/config logic already proven working in the K8s version this
+# session (litellm guardrails, llama_guard custom guardrail, Langfuse
+# headless init + dual-write fix, Presidio, Keycloak), minus the
+# Kubernetes-only tooling (Kyverno, Velero, the operators) which has no
+# meaning outside a K8s control plane - see k8s/ tree for that version.
+#
+# vLLM itself stays bare-metal on the Zrok VMs (never changes) - reached
+# here via host.docker.internal + the same SSH tunnel ports already used
+# by the K8s version (18000/18001 -> Zrok7/8 qwen3-8b-awq). Content safety
+# runs on Zrok9 too, but no longer as a second 8B vLLM model - it's Laya
+# (https://huggingface.co/convaiinnovations/laya), a 421M non-autoregressive
+# classifier served via laya-serve (see ../service_laya.sh), reached over
+# the same 18002 tunnel port the old Llama-Guard vLLM instance used. See
+# litellm/safety_guardrail.py for the guardrail itself. Those tunnels must
+# already be running on the host before `docker compose up` (see
+# ../k8s/restore_after_reboot.sh's tunnel section, or relaunch manually).
+#
+# NOT pulled/started yet - prepared ahead of time per the user's explicit
+# request to wait for better bandwidth before running this.
+
+services:
+  # ---------------------------------------------------------------------
+  # LiteLLM - the gateway. PII masking + content safety + audit logging
+  # all enforced here via guardrails/callbacks, same as the K8s version.
+  # ---------------------------------------------------------------------
+  litellm-postgres:
+    image: postgres:16-alpine  # pinned: :latest moved to pg18 which changed the data-mount convention (compose written for <=16)
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm-poc-password}
+    volumes:
+      - litellm-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  litellm:
+    image: ghcr.io/berriai/litellm:1.105.1
+    depends_on:
+      litellm-postgres:
+        condition: service_healthy
+      presidio-analyzer:
+        condition: service_started
+      presidio-anonymizer:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm-poc-password}@litellm-postgres:5432/litellm
+      PROXY_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      VLLM_API_KEY: ${VLLM_API_KEY:?set VLLM_API_KEY in .env - same key used by service_vllm.sh on the Zrok VMs}
+      LAYA_API_KEY: ${LAYA_API_KEY:?set LAYA_API_KEY in .env - same key used for service_laya.sh on Zrok9}
+      LAYA_API_BASE: http://host.docker.internal:18002
+      LAYA_MODEL: safe-laya
+      PRESIDIO_ANALYZER_API_BASE: http://presidio-analyzer:3000
+      PRESIDIO_ANONYMIZER_API_BASE: http://presidio-anonymizer:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set after Langfuse headless init - see ../k8s/05-governance/apps/langfuse-values.yaml's additionalEnvFrom notes for the same pattern}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?}
+      LANGFUSE_HOST: http://langfuse-web:3000
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/safety_guardrail.py:/app/safety_guardrail.py:ro
+    command: ["--config", "/app/config.yaml"]
+
+  # ---------------------------------------------------------------------
+  # Presidio - PII detection/masking, called by LiteLLM's presidio-pii
+  # guardrail (pre_call, default_on - every request).
+  # ---------------------------------------------------------------------
+  presidio-analyzer:
+    image: ghcr.io/data-privacy-stack/presidio-analyzer:latest
+
+  presidio-anonymizer:
+    image: ghcr.io/data-privacy-stack/presidio-anonymizer:latest
+
+  # ---------------------------------------------------------------------
+  # Keycloak - OIDC for the chat dashboard (NOT the /v1/* API - that uses
+  # LiteLLM's own Bearer-token masterkey, same reasoning as the K8s
+  # version's SecurityPolicy: browser redirect-flow auth doesn't fit
+  # programmatic API clients). oauth2-proxy sits between the browser and
+  # chat-ui, replacing Envoy Gateway's SecurityPolicy CRD.
+  # ---------------------------------------------------------------------
+  keycloak-postgres:
+    image: postgres:16-alpine  # pinned: :latest moved to pg18 which changed the data-mount convention
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-poc-password}
+    volumes:
+      - keycloak-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start-dev"]
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-poc-password}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8081:8080"  # admin console - host port 8081 since 8080 often taken locally
+      - "8080:8080"  # browser-facing OIDC issuer port (oauth2-proxy redirects the browser to http://keycloak:8080 - resolved via extra_hosts on both sides)
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    depends_on:
+      - keycloak
+      - chat-ui
+    # (no extra_hosts: with skip-oidc-discovery + explicit split URLs below,
+    # the container only ever talks to compose-DNS "keycloak", and the
+    # browser only ever talks to host-published localhost:8080)
+    ports:
+      - "4180:4180"
+    environment:
+      OAUTH2_PROXY_PROVIDER: keycloak-oidc
+      # Single consistent issuer (http://localhost:8080) - the same URL the
+      # browser hits AND the iss claim inside the tokens. From inside the
+      # container "localhost" is wrong, so skip discovery and point every
+      # backend fetch at the compose-DNS name while keeping issuer/login on
+      # the host-published localhost:8080 (which both sides can reach).
+      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
+      OAUTH2_PROXY_OIDC_ISSUER_URL: http://localhost:8080/realms/chat-ui
+      OAUTH2_PROXY_LOGIN_URL: http://localhost:8080/realms/chat-ui/protocol/openid-connect/auth
+      OAUTH2_PROXY_REDEEM_URL: http://keycloak:8080/realms/chat-ui/protocol/openid-connect/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://keycloak:8080/realms/chat-ui/protocol/openid-connect/certs
+      OAUTH2_PROXY_CLIENT_ID: chat-dashboard
+      OAUTH2_PROXY_CLIENT_SECRET: ${CHAT_DASHBOARD_CLIENT_SECRET:?set after creating the chat-dashboard client in the chat-ui realm (same Admin REST API steps used for the K8s version - realm "chat-ui", client "chat-dashboard")}
+      OAUTH2_PROXY_REDIRECT_URL: http://localhost:4180/oauth2/callback
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_UPSTREAMS: http://chat-ui:8080
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:?generate via python3 -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"}
+      OAUTH2_PROXY_COOKIE_SECURE: "false"  # plain http for this local demo - set true behind real TLS
+
+  chat-ui:
+    build: ./chat-ui
+    environment:
+      CHAT_PROXY_UPSTREAM_BASE: http://litellm:4000
+      CHAT_PROXY_API_KEY: ${LITELLM_MASTER_KEY:?}
+
+  # ---------------------------------------------------------------------
+  # Langfuse - audit logging (official self-host compose shape, reused
+  # as-is from langfuse/langfuse's own docker-compose.yml: web + worker +
+  # clickhouse + minio + redis + postgres). Headless init env vars create
+  # the org/project/key on first boot, same as the K8s version's
+  # LANGFUSE_INIT_* approach - keys here must match litellm's
+  # LANGFUSE_PUBLIC_KEY/SECRET_KEY above exactly.
+  # ---------------------------------------------------------------------
+  langfuse-postgres:
+    image: postgres:16-alpine  # pinned: :latest moved to pg18 which changed the data-mount convention
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse-poc-password}
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  langfuse-redis:
+    image: valkey/valkey:latest  # no version-specific feature relied on - safe
+    command: ["valkey-server", "--requirepass", "${LANGFUSE_REDIS_PASSWORD:-langfuse-poc-password}"]
+    volumes:
+      - langfuse-redis-data:/data
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:26.4
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-poc-password}
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+
+  langfuse-minio:
+    # minio/minio was pulled from Docker Hub/Quay on 2025-10-23 (unmaintained,
+    # unpatched CVEs) - Langfuse's own upstream compose switched to
+    # Chainguard's free, distroless, non-root-by-default rebuild, same fix
+    # applied here. Same `minio server` CLI args either way.
+    image: cgr.dev/chainguard/minio:latest
+    command: ["server", "--address", ":9090", "--console-address", ":9091", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-minioadmin123}
+    volumes:
+      - langfuse-minio-data:/data
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    depends_on:
+      langfuse-postgres: { condition: service_healthy }
+      langfuse-clickhouse: { condition: service_started }
+      langfuse-minio: { condition: service_started }
+      langfuse-redis: { condition: service_started }
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse-poc-password}@langfuse-postgres:5432/langfuse
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-poc-password}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      # Single-node ClickHouse - no cluster/Zookeeper (official upstream compose
+      # default is CLICKHOUSE_CLUSTER_ENABLED=false; without it migrations emit
+      # ON CLUSTER/ReplicatedMergeTree DDL and fail with "no Zookeeper config")
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://:${LANGFUSE_REDIS_PASSWORD:-langfuse-poc-password}@langfuse-redis:6379
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9090
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minioadmin}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-minioadmin123}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?generate via openssl rand -hex 32}
+      NEXTAUTH_URL: http://localhost:3000
+      SALT: ${LANGFUSE_SALT:?generate via openssl rand -hex 32}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?generate via openssl rand -hex 32}
+      # Dual write mode - the real fix found this session: LiteLLM's native
+      # langfuse callback uses the legacy pre-OTel ingestion path, which
+      # Langfuse v4's default events_only mode silently rejects (confirmed:
+      # zero rows ever landed in ClickHouse until this was set).
+      LANGFUSE_MIGRATION_V4_WRITE_MODE: dual
+      # Headless init - creates org/project/user/keys matching the
+      # LANGFUSE_PUBLIC_KEY/SECRET_KEY given to litellm above.
+      LANGFUSE_INIT_ORG_ID: benchmark-vllm-org
+      LANGFUSE_INIT_ORG_NAME: benchmark-vllm
+      LANGFUSE_INIT_PROJECT_ID: vllm-poc
+      LANGFUSE_INIT_PROJECT_NAME: vllm-poc
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?}
+      LANGFUSE_INIT_USER_EMAIL: admin@benchmark-vllm.local
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:?set LANGFUSE_ADMIN_PASSWORD in .env}
+      LANGFUSE_INIT_USER_NAME: admin
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    depends_on:
+      langfuse-postgres: { condition: service_healthy }
+      langfuse-clickhouse: { condition: service_started }
+      langfuse-minio: { condition: service_started }
+      langfuse-redis: { condition: service_started }
+    environment:
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse-poc-password}@langfuse-postgres:5432/langfuse
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-poc-password}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://:${LANGFUSE_REDIS_PASSWORD:-langfuse-poc-password}@langfuse-redis:6379
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9090
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minioadmin}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-minioadmin123}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      SALT: ${LANGFUSE_SALT:?}}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?}
+      LANGFUSE_MIGRATION_V4_WRITE_MODE: dual
+
+  # ---------------------------------------------------------------------
+  # OpenBao - secrets management.
+  # ---------------------------------------------------------------------
+  openbao:
+    image: openbao/openbao:latest
+    cap_add: ["IPC_LOCK"]
+    environment:
+      BAO_DEV_ROOT_TOKEN_ID: ${OPENBAO_ROOT_TOKEN:?set OPENBAO_ROOT_TOKEN in .env}
+    ports:
+      - "8200:8200"
+    command: ["server", "-dev"]
+
+volumes:
+  litellm-postgres-data:
+  keycloak-postgres-data:
+  langfuse-postgres-data:
+  langfuse-redis-data:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:
+  langfuse-minio-data:

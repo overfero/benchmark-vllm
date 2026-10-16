@@ -1,0 +1,114 @@
+# Bridges the cluster to the REAL vLLM AWQ instances running bare-metal on
+# Kaggle_Zrok7 AND Kaggle_Zrok8 (outside this cluster - confirmed Zrok VMs
+# can't be K8s nodes, see plan's ARCHITECTURE CORRECTION). Both VMs run the
+# same model (qwen3-8b-awq) independently; LiteLLM load-balances across
+# both (see litellm-values.yaml's two litellm_params entries under one
+# model_name). The laptop (an actual cluster node) runs a persistent SSH
+# -L port-forward per VM (18000->Zrok8, 18001->Zrok7), bound to its own
+# real LAN IP so cluster pods can reach them. A Service with no selector +
+# manually-authored Endpoints is the standard Kubernetes pattern for
+# pointing at a backend that lives outside the cluster.
+#
+# Fragile by design for a POC: if the laptop's IP changes (see the node-ip
+# saga this session) or either SSH forward dies, that backend breaks until
+# fixed manually. k8s/01-foundation/fix_node_ip.sh now patches the
+# Endpoints IPs below automatically as its last step, since this went
+# stale and silently broke LiteLLM more than once before that was added -
+# but the IP in this file is still only a point-in-time snapshot (whatever
+# it was when last applied from this file, not from the live patch) and
+# will drift from the cluster's real live value over time. Acceptable here
+# - this is explicitly the "mock becomes a real backend" upgrade over
+# Phase 2's pure mock, not a production-grade ingress path (that's Envoy
+# Gateway's job in the real design, once properly wired).
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-zrok8-external
+  namespace: default
+spec:
+  ports:
+    - port: 8000
+      targetPort: 18000
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: vllm-zrok8-external
+  namespace: default
+subsets:
+  - addresses:
+      - ip: 10.251.17.220
+    ports:
+      - port: 18000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-zrok7-external
+  namespace: default
+spec:
+  ports:
+    - port: 8000
+      targetPort: 18001
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: vllm-zrok7-external
+  namespace: default
+subsets:
+  - addresses:
+      - ip: 10.251.17.220
+    ports:
+      - port: 18001
+---
+# Kaggle_Zrok9 runs Llama-Guard-3-8B-AWQ (not the main qwen3-8b-awq model) -
+# separate bridge, used by the llama_guard custom guardrail, not LiteLLM's
+# model_list load-balancing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-zrok9-external
+  namespace: default
+spec:
+  ports:
+    - port: 8000
+      targetPort: 18002
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: vllm-zrok9-external
+  namespace: default
+subsets:
+  - addresses:
+      - ip: 10.251.17.220
+    ports:
+      - port: 18002
+---
+# Chat dashboard (chat_proxy.py) also runs bare-metal on Zrok8, tunneled to
+# this laptop's :8080 - same bridge pattern, needed so Envoy Gateway (k8s-
+# only) can put a SecurityPolicy (Keycloak OIDC) in front of it. Placed in
+# the litellm namespace alongside the Gateway/HTTPRoute that will route to
+# it, not default, since nothing else references it by the default-ns DNS
+# name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-ui-external
+  namespace: litellm
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: chat-ui-external
+  namespace: litellm
+subsets:
+  - addresses:
+      - ip: 10.251.17.220
+    ports:
+      - port: 8080

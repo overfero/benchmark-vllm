@@ -30,7 +30,28 @@ acquire_lock
 log "deploying chat dashboard (screen 'chat_ui', :$CHAT_PORT) on $HOST_ALIAS..."
 scp_cmd chat_dashboard.html "$HOST_ALIAS:/root/chat_dashboard.html"
 scp_cmd chat_proxy.py "$HOST_ALIAS:/root/chat_proxy.py"
-ssh_cmd "screen -S chat_ui -X quit 2>/dev/null; pkill -f 'chat_proxy.py' 2>/dev/null; true"
+# [c]hat_proxy.py bracket trick: pkill -f matches full argv, which includes
+# this very command's own text ("pkill -f 'chat_proxy.py'" literally
+# contains "chat_proxy.py") - same self-match bug already found and fixed
+# in service_vllm.sh this session, 100% reproducible, not a fluke.
+ssh_cmd "screen -S chat_ui -X quit 2>/dev/null; pkill -f '[c]hat_proxy.py' 2>/dev/null; true"
 sleep 2
-ssh_cmd "source /root/miniconda3/etc/profile.d/conda.sh && conda activate vllm_qwen38 && screen -S chat_ui -dm bash -c 'python /root/chat_proxy.py 2>&1 | tee /root/chat_ui.log'"
+
+# Written to a script FILE and scp'd rather than inlined over ssh, same
+# reason as service_vllm.sh's launch script: nested quoting breaks under
+# `ssh ... "... | bash -c '...'"`. Extracts the running vLLM server's own
+# API key from its launch script (written by service_vllm.sh) - the key
+# value itself never passes through THIS script's own stdout/context.
+# vLLM requires it on every /v1/* call; the dashboard's JS never sends
+# one, so chat_proxy.py injects it itself (see chat_proxy.py).
+cat > /tmp/launch_chat_ui_${HOST_ALIAS}.sh << 'LAUNCHEOF'
+#!/bin/bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate vllm_qwen38
+export VLLM_API_KEY=$(grep -oP '(?<=--api-key ")[^"]+' /root/launch_vllm.sh)
+python /root/chat_proxy.py 2>&1 | tee /root/chat_ui.log
+LAUNCHEOF
+scp_cmd /tmp/launch_chat_ui_${HOST_ALIAS}.sh "$HOST_ALIAS:/root/launch_chat_ui.sh"
+ssh_cmd "chmod +x /root/launch_chat_ui.sh"
+ssh_cmd "screen -S chat_ui -dm bash /root/launch_chat_ui.sh"
 log "launched"

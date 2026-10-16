@@ -1,0 +1,40 @@
+# Same guardrail/callback logic proven working in the K8s version
+# (litellm-values.yaml) - adapted here for Compose networking: vLLM
+# backends on Zrok7/8/9 are reached via host.docker.internal + the same
+# SSH tunnel ports already used (18000/18001/18002 -> each VM's vLLM),
+# not Kubernetes Service DNS names.
+model_list:
+  - model_name: qwen3-8b-awq
+    litellm_params:
+      model: openai/qwen3-8b
+      api_base: http://host.docker.internal:18000/v1
+      api_key: os.environ/VLLM_API_KEY
+  - model_name: qwen3-8b-awq
+    litellm_params:
+      model: openai/qwen3-8b
+      api_base: http://host.docker.internal:18001/v1
+      api_key: os.environ/VLLM_API_KEY
+
+guardrails:
+  - guardrail_name: "presidio-pii"
+    litellm_params:
+      guardrail: presidio
+      mode: "pre_call"
+      default_on: true
+      pii_entities_config:
+        CREDIT_CARD: "MASK"
+        EMAIL_ADDRESS: "MASK"
+        PHONE_NUMBER: "MASK"
+        PERSON: "MASK"
+  - guardrail_name: "content-safety"
+    litellm_params:
+      guardrail: safety_guardrail.SafetyGuardrail
+      mode: "during_call"
+      default_on: true
+
+litellm_settings:
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+
+general_settings:
+  master_key: os.environ/PROXY_MASTER_KEY

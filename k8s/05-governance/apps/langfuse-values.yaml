@@ -1,0 +1,114 @@
+# Langfuse (LLM observability/tracing, wired to LiteLLM) - Phase 5 governance
+# item. Real architectural finding (checked every available chart major,
+# down to 1.5.x / app v3): ClickHouse has been mandatory since Langfuse v3,
+# no official chart skips it. Minimum viable footprint is genuinely ~2-3GB
+# on top of everything else already running - deployed here with every
+# sub-component pinned to overpc and given explicit, conservative resource
+# bounds (none of this chart's defaults set any - see notes below), after a
+# real OOM-cascade incident this session (trivy-operator, unbounded, took
+# the whole cluster down via cgroup OOM -> node thrashing). Requires the
+# clickhouse-operator release (clickhouse-operator-system namespace,
+# installed separately) and cert-manager (already present).
+langfuse:
+  nodeSelector:
+    kubernetes.io/hostname: overpc
+  # Headless init (langfuse.com/self-hosting/headless-initialization) -
+  # creates the org/project/user/API-key on startup via LANGFUSE_INIT_*
+  # env vars, so LiteLLM's langfuse success_callback has real keys to use
+  # without ever touching the Langfuse UI. Keys generated once and reused
+  # identically in litellm-values.yaml's litellm-langfuse-env secret.
+  additionalEnvFrom:
+    - secretRef:
+        name: langfuse-init-env
+  web:
+    resources:
+      # Real finding: web OOM'd too ("JavaScript heap out of memory" at
+      # ~378MB heap) running its own 50+ ClickHouse schema migrations - the
+      # probe-timing theory was a red herring, exitCode 134 (SIGABRT from
+      # V8's OOM handler) proved it was a genuine heap OOM the whole time,
+      # same root cause as worker's crash. NODE_OPTIONS below caps V8's heap
+      # explicitly so it fails predictably instead of trying to grow past
+      # whatever the container limit allows.
+      requests: { cpu: 100m, memory: 500Mi }
+      limits: { cpu: 500m, memory: 1024Mi }
+    pod:
+      additionalEnv:
+        - name: NODE_OPTIONS
+          value: "--max-old-space-size=768"
+    # Kept from the earlier (correct, but insufficient alone) finding that
+    # migrations take 150s+ before the server even binds.
+    livenessProbe:
+      initialDelaySeconds: 240
+      failureThreshold: 6
+    readinessProbe:
+      initialDelaySeconds: 240
+      failureThreshold: 6
+  worker:
+    resources:
+      # Real finding: worker OOM'd ("JavaScript heap out of memory") running
+      # its own startup init script (dashboard widget upsert via Prisma) -
+      # 512Mi was too tight for Node's heap + container overhead.
+      requests: { cpu: 100m, memory: 400Mi }
+      limits: { cpu: 500m, memory: 896Mi }
+    pod:
+      additionalEnv:
+        - name: NODE_OPTIONS
+          value: "--max-old-space-size=640"
+
+postgresql:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  nodeSelector:
+    kubernetes.io/hostname: overpc
+  storage:
+    requestedSize: 5Gi
+
+redis:
+  dataStorage:
+    requestedSize: 512Mi
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 300m, memory: 128Mi }
+  image:
+    pullPolicy: IfNotPresent
+  # chart has no top-level nodeSelector for the valkey subchart pass-through
+  # under this key name in some chart versions - set the subchart's own key
+  # directly if the parent doesn't forward it.
+
+clickhouse:
+  cluster:
+    replicas: 1
+    # Chart's own default here is 2Gi request/4Gi limit specifically because
+    # the operator's bare fallback (~1Gi) OOMs under load - still trimming
+    # below that chart default since this is a near-idle POC demo, not real
+    # analytics traffic, but staying well above the operator's own fallback
+    # floor.
+    resources:
+      requests: { cpu: 300m, memory: 1Gi }
+      limits: { cpu: "1", memory: 1536Mi }
+    storage:
+      size: 10Gi
+    nodeSelector:
+      kubernetes.io/hostname: overpc
+    logger:
+      level: information
+  keeper:
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 300m, memory: 256Mi }
+    storage:
+      size: 2Gi
+    nodeSelector:
+      kubernetes.io/hostname: overpc
+    logger:
+      level: information
+
+s3:
+  # SeaweedFS allInOne mode (bundled S3-compatible blob store for uploads) -
+  # no explicit resource/nodeSelector keys exposed at this chart's top level
+  # for the s3 subchart in 2.1.5; left at chart defaults (already small,
+  # single allInOne pod) rather than guessing an unsupported override path.
+  bucket: "langfuse"

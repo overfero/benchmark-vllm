@@ -1,0 +1,56 @@
+# CIS benchmark audit evidence (Phase 5 governance item). Adapted from
+# aquasecurity/kube-bench's upstream job-master.yaml: RKE2 stores everything
+# under /var/lib/rancher/rke2 and /etc/rancher/rke2 instead of the vanilla
+# /etc/kubernetes, /var/lib/etcd paths that job-master.yaml hardcodes, so the
+# volume mounts below are rewritten for RKE2's real layout and --benchmark is
+# pinned explicitly (rke2-cis-1.24) rather than relying on auto-detection,
+# which only recognizes vanilla kubeadm/EKS/GKE/etc control-plane fingerprints.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kube-bench
+  namespace: default
+spec:
+  template:
+    spec:
+      hostPID: true
+      nodeSelector:
+        kubernetes.io/hostname: overpc
+      containers:
+        - name: kube-bench
+          image: docker.io/aquasec/kube-bench:latest
+          command: ["kube-bench", "run", "--benchmark", "rke2-cis-1.24"]
+          volumeMounts:
+            - name: rke2-data
+              mountPath: /var/lib/rancher/rke2
+              readOnly: true
+            - name: rke2-config
+              mountPath: /etc/rancher/rke2
+              readOnly: true
+            - name: etc-systemd
+              mountPath: /etc/systemd
+              readOnly: true
+            - name: lib-systemd
+              mountPath: /lib/systemd
+              readOnly: true
+            - name: etc-passwd
+              mountPath: /etc/passwd
+              readOnly: true
+            - name: etc-group
+              mountPath: /etc/group
+              readOnly: true
+      restartPolicy: Never
+      volumes:
+        - name: rke2-data
+          hostPath: { path: /var/lib/rancher/rke2 }
+        - name: rke2-config
+          hostPath: { path: /etc/rancher/rke2 }
+        - name: etc-systemd
+          hostPath: { path: /etc/systemd }
+        - name: lib-systemd
+          hostPath: { path: /lib/systemd }
+        - name: etc-passwd
+          hostPath: { path: /etc/passwd }
+        - name: etc-group
+          hostPath: { path: /etc/group }
+  backoffLimit: 1

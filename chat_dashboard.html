@@ -222,7 +222,7 @@
 
 <script>
 const API_BASE = ""; // same-origin: proxy serves both this page and /v1/*
-const MODEL = "qwen3-8b";
+const MODEL = "qwen3-8b-awq"; // must match the served/registered model name - vLLM direct didn't enforce this (single model, ignores the field), but LiteLLM's model_list routing does
 
 const messagesEl = document.getElementById("messages");
 const emptyState = document.getElementById("empty-state");

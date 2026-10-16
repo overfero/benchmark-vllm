@@ -1,0 +1,106 @@
+# LiteLLM proxy, routing to the REAL vLLM AWQ instances on BOTH Kaggle_Zrok7
+# and Kaggle_Zrok8 via the vllm-zrok7/8-external Services (see
+# vllm-external-backend.yaml) - genuine working backends, not a mock, since
+# vLLM is actually live on both. Two litellm_params entries under the SAME
+# model_name is LiteLLM's own native load-balancing mechanism (default
+# routing_strategy is round-robin across all deployments of that name) -
+# this is what actually fulfills the "2 redundant workers" design from the
+# plan; before this fix only Zrok8 was ever wired in, Zrok7 ran idle despite
+# serving the same model. deployStandalone (default true) makes the chart
+# deploy its own Postgres sub-chart - no manual DB needed, unlike Keycloak's
+# operator.
+masterkeySecretName: litellm-masterkey
+masterkeySecretKey: masterkey
+
+proxy_config:
+  model_list:
+    - model_name: qwen3-8b-awq
+      litellm_params:
+        model: openai/qwen3-8b-awq
+        api_base: http://vllm-zrok8-external.default.svc.cluster.local:8000/v1
+        api_key: os.environ/VLLM_API_KEY
+    - model_name: qwen3-8b-awq
+      litellm_params:
+        model: openai/qwen3-8b-awq
+        api_base: http://vllm-zrok7-external.default.svc.cluster.local:8000/v1
+        api_key: os.environ/VLLM_API_KEY
+
+  # default_on: true means every request passes through both, no client
+  # opt-in needed (plan's intent: PII masking + content safety are always
+  # on, not opt-in features). presidio is LiteLLM's native provider
+  # (docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2); llama_guard has
+  # no native provider in LiteLLM (confirmed via its own docs - only a
+  # legacy SageMaker-only callback exists) so it's a Custom Guardrail
+  # (llama_guard_guardrail.py, mounted alongside config.yaml below) calling
+  # our own Llama-Guard-3-8B-AWQ on Zrok9 via the during_call hook (runs in
+  # parallel with the real model call, blocks the response if unsafe -
+  # not a sequential extra hop).
+  guardrails:
+    - guardrail_name: "presidio-pii"
+      litellm_params:
+        guardrail: presidio
+        mode: "pre_call"
+        default_on: true
+        pii_entities_config:
+          CREDIT_CARD: "MASK"
+          EMAIL_ADDRESS: "MASK"
+          PHONE_NUMBER: "MASK"
+          PERSON: "MASK"
+    - guardrail_name: "llama-guard"
+      litellm_params:
+        guardrail: llama_guard_guardrail.LlamaGuardGuardrail
+        mode: "during_call"
+        default_on: true
+
+  # NOTE: this must live nested under proxy_config (which the chart maps
+  # 1:1 onto config.yaml) - a sibling top-level `litellm_settings:` Helm
+  # value here is silently ignored, confirmed via `helm template` showing
+  # no success_callback in the rendered manifest at all.
+  litellm_settings:
+    success_callback: ["langfuse"]
+    failure_callback: ["langfuse"]
+
+environmentSecrets:
+  - litellm-vllm-env
+  - litellm-langfuse-env
+
+environmentConfigMaps:
+  - litellm-guardrail-env
+
+volumes:
+  - name: custom-guardrails
+    configMap:
+      name: litellm-custom-guardrails
+
+volumeMounts:
+  - name: custom-guardrails
+    mountPath: /etc/litellm/llama_guard_guardrail.py
+    subPath: llama_guard_guardrail.py
+
+# Chart ships with resources: {} (unbounded) by default - real finding this
+# session: with no limit set, litellm was free to grow unchecked and was one
+# of several pods that piled on during a different pod's OOM storm. Chart's
+# own docs quote ~1 CPU/4Gi per worker for PRODUCTION load; this is a single-
+# worker POC with light demo traffic (observed real usage: 576Mi), so sized
+# well below that guidance instead, with a capped limit so it can never again
+# contribute to an uncontrolled memory spike on this laptop.
+resources:
+  requests: { cpu: 100m, memory: 400Mi }
+  limits: { cpu: 500m, memory: 800Mi }
+
+# Force scheduling onto overpc (the real laptop node, standard overlayfs
+# snapshotter) rather than FakeNode1 (the dev-harness container, forced
+# onto the `native` snapshotter earlier to work around a different bug -
+# overlay-on-overlay mounting - but `native` snapshotter can't extract OCI
+# whiteout files in this nested-Docker context either: "failed to convert
+# whiteout file ... operation not permitted", confirmed via a direct `ctr
+# images pull` test that showed the actual download itself was fast
+# (385MB in 23s) and NOT the bottleneck - every apparent "stall" was
+# kubelet silently retrying the same doomed extraction over and over).
+nodeSelector:
+  kubernetes.io/hostname: overpc
+
+postgresql:
+  primary:
+    nodeSelector:
+      kubernetes.io/hostname: overpc

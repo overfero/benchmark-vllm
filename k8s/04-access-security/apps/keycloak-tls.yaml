@@ -1,0 +1,26 @@
+# Self-signed TLS for Keycloak - required because Envoy Gateway's
+# SecurityPolicy OIDC schema hard-validates provider.issuer against
+# `^https://...` (rejected the plain http:// issuer outright, confirmed:
+# "spec.oidc.provider.issuer: Invalid value"). Same self-signed pattern
+# already used for clickhouse-operator and kserve in this cluster.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: keycloak-selfsigned-issuer
+  namespace: keycloak
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keycloak-tls
+  namespace: keycloak
+spec:
+  secretName: keycloak-tls-secret
+  dnsNames:
+    - keycloak-service.keycloak.svc.cluster.local
+    - keycloak-service
+  issuerRef:
+    name: keycloak-selfsigned-issuer
+    kind: Issuer

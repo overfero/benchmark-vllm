@@ -1,0 +1,50 @@
+# Continuous image/config vulnerability scanning (Phase 5 governance item).
+# Operator itself is lightweight; it spawns short-lived scan Jobs per
+# workload image - pinned to overpc (not FakeNode1, which can't extract OCI
+# layers under its `native` snapshotter - same whiteout bug hit earlier in
+# this session for LiteLLM/Postgres).
+nodeSelector:
+  kubernetes.io/hostname: overpc
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: 300m, memory: 256Mi }
+trivy:
+  resources:
+    requests: { cpu: 100m, memory: 100Mi }
+    limits: { cpu: 500m, memory: 500Mi }
+
+# scanJobNodeSelector also needs pinning, separately from the top-level
+# nodeSelector above (that one only covers the operator pod itself) - without
+# this the scanner Jobs land on FakeNode1 and their own pod image pull hits
+# the same native-snapshotter whiteout bug.
+#
+# Real finding: default mode (Standalone) makes EVERY scan job independently
+# download its own ~127MB trivy-db, with scanJobsConcurrentLimit defaulting
+# to 10 - that's 9 simultaneous full DB downloads observed in this session,
+# ETA 20-27min each on the available bandwidth and ~4GB of disk burned in
+# minutes, on a laptop with 49GB free disk and the user explicitly on a
+# bandwidth-limited mobile data plan. builtInTrivyServer runs ONE persistent
+# trivy-server that downloads the DB once; scan jobs become thin clients
+# against it. scanJobsConcurrentLimit still capped low as a second guard.
+# NOTE: all of these keys live under `operator:`, not `trivyOperator:` -
+# confirmed via `helm show values`, the values-doc comments in the chart
+# itself are misleadingly indented to look like a separate top-level block.
+operator:
+  scanJobNodeSelector:
+    kubernetes.io/hostname: overpc
+  builtInTrivyServer: true
+  scanJobsConcurrentLimit: 2
+  # clusterComplianceEnabled does a full reconcile sweep over every resource
+  # type cluster-wide (Jobs, PVs, DaemonSets, StatefulSets, Ingresses, ...) -
+  # on this laptop's existing ~15-namespace Phase 1-4 footprint that startup
+  # sweep alone was enough CPU/IO load to blow the liveness probe's timeout
+  # repeatedly (confirmed: real "context canceled" reconcile errors across
+  # dozens of unrelated resources, not an OOM or config error). It's also
+  # redundant with kube-bench's CIS audit already run separately. Disabled;
+  # keep only the two scanners the POC actually needs.
+  clusterComplianceEnabled: false
+  rbacAssessmentScannerEnabled: false
+  infraAssessmentScannerEnabled: false
+trivy:
+  storageClassEnabled: false
+

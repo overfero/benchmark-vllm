@@ -1,0 +1,15 @@
+# Small local-path PVC for MLflow's sqlite backend DB + artifact files, so
+# both survive pod restarts without needing a separate Postgres (lightest
+# viable option - avoids adding yet another stateful service after
+# Langfuse's incident-prone rollout this session).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-data
+  namespace: mlflow
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

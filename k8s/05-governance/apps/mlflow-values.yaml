@@ -1,0 +1,40 @@
+# MLflow (model registry/versioning) - Phase 5 governance item. Lightest
+# viable setup after this session's incidents: sqlite backend on a small
+# local-path PVC (not Postgres - no need for a second stateful DB on this
+# laptop) and local-filesystem artifact storage on the same PVC (not
+# MinIO/S3 - avoids another heavy subchart). Resources/nodeSelector set
+# explicitly from the start this time, not discovered after an OOM.
+#
+# Real finding (confirmed via dmesg cgroup-OOM lines across 3 separate
+# attempts, not guessed): even at workers=1, some internal MLflow process
+# pool spawns a VARYING number of python processes each start (7, then 5,
+# then 8 - matches this laptop's 8 CPU cores, not a fixed gunicorn worker
+# count), each ~150-700MB. Chasing an exact hard limit kept getting beaten
+# by the next attempt's count. The chart's own values.yaml leaves resources
+# unset by default specifically for this reason ("so an upgrade never
+# leaves a running pod Pending... sizing below that gets OOMKilled") -
+# following that here too: no limit, only a request, given this laptop has
+# real headroom (8.6GB available) and MLflow sees near-zero real traffic.
+extraArgs:
+  workers: "1"
+resources:
+  requests: { cpu: 200m, memory: 768Mi }
+
+nodeSelector:
+  kubernetes.io/hostname: overpc
+
+backendStore:
+  defaultSqlitePath: "/mlflow/data/mlflow.db"
+
+artifactRoot:
+  defaultArtifactRoot: "/mlflow/data/mlruns"
+  defaultArtifactsDestination: "/mlflow/data/mlartifacts"
+
+extraVolumes:
+  - name: mlflow-data
+    persistentVolumeClaim:
+      claimName: mlflow-data
+
+extraVolumeMounts:
+  - name: mlflow-data
+    mountPath: /mlflow/data

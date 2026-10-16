@@ -1,0 +1,40 @@
+# MOCK InferenceService - demonstrates KServe's custom-predictor mechanics
+# (CRD, controller reconciliation, Service/Deployment creation, health
+# checks) WITHOUT real GPU inference. Real constraint: Kaggle_Zrok7/
+# Kaggle_Zrok8 (the only real GPU capacity available) cannot join this
+# cluster as nodes (confirmed - their container capability set excludes
+# cap_sys_admin/cap_net_admin/cap_bpf, see plan's "ARCHITECTURE CORRECTION"
+# section), and the laptop's own GPU (MX350, 2GB) is intentionally never
+# used for serving (laptop = administrator/control-plane role only, per
+# explicit user instruction). So vLLM keeps running exactly as already
+# proven - bare-metal, screen-based, on the Zrok VMs directly, outside this
+# cluster.
+#
+# This predictor uses nginx-unprivileged (already cached in this cluster's
+# image pre-pull) as a stand-in container - it listens on :8080 (KServe's
+# expected default predictor port) and returns nginx's default page rather
+# than a real model response. Once vLLM is redeployed on a Zrok VM and a
+# stable path from this cluster to that endpoint exists (the zrok tunnel
+# only accepts outbound connections FROM the laptop today - reachability
+# FROM a pod is a separate problem to solve, not yet done), swap this
+# container for a small reverse-proxy image pointed at that real endpoint.
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: vllm-mock
+  namespace: default
+spec:
+  predictor:
+    containers:
+      - name: kserve-container
+        image: docker.io/nginxinc/nginx-unprivileged:1.29-alpine
+        ports:
+          - containerPort: 8080
+            protocol: TCP
+        resources:
+          limits:
+            cpu: "1"
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 64Mi

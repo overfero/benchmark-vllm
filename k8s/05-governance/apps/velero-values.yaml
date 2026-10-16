@@ -1,0 +1,43 @@
+# Velero (cluster backup) - Phase 5 governance item. Backup target is the
+# existing rclone `gdrive:` remote already configured on the Zrok VMs (user
+# decision: reuse working infra over standing up MinIO just for this) -
+# fronted by `rclone serve s3` running in a screen session on Kaggle_Zrok7
+# (bucket "velero" under gdrive:velero-backups/velero), reached from the
+# cluster via an SSH port-forward tunnel from this laptop
+# (127.0.0.1:19000 -> Zrok7:9000), same fragile-by-design-for-POC pattern as
+# vllm-zrok8-external. velero-credentials Secret created separately
+# (kubectl create secret, not committed to this repo).
+nodeSelector:
+  kubernetes.io/hostname: overpc
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.12.1
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+credentials:
+  useSecret: true
+  existingSecret: velero-credentials
+
+configuration:
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: velero
+      config:
+        region: minio
+        s3ForcePathStyle: true
+        # 192.168.0.189 is this laptop's own LAN IP, where the SSH tunnel to
+        # Zrok7's rclone-s3 gateway is bound - reachable from pods on overpc
+        # (and FakeNode1, same host network) without a separate Service.
+        s3Url: http://192.168.0.189:19000
+  volumeSnapshotLocation: []
+
+deployNodeAgent: false

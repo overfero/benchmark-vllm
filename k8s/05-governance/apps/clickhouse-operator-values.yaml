@@ -1,0 +1,8 @@
+# Cluster-wide controller required by the Langfuse chart's bundled ClickHouse
+# (Langfuse docs: "requires cert-manager and the ClickHouse operator,
+# installed once per cluster"). Official chart, already lean by default
+# (64Mi/128Mi) - only pinning scheduling to overpc to avoid FakeNode1's
+# native-snapshotter whiteout bug (same reason as every other component).
+manager:
+  nodeSelector:
+    kubernetes.io/hostname: overpc

@@ -1,0 +1,108 @@
+# Keycloak for this cluster, via the OFFICIAL Keycloak Operator (installed
+# separately: `helm install keycloak-operator oci://quay.io/keycloak/keycloak-operator-helm`)
+# - NOT the bitnami/keycloak chart, which is broken (confirmed this session:
+# bitnami/keycloak has ZERO tags left on Docker Hub, part of Broadcom's 2025
+# restructuring of Bitnami's free images).
+#
+# The Operator's Keycloak CR always requires a real Postgres connection (no
+# embedded-dev-db option like the standalone `kc.sh start-dev` has), and
+# bitnami/postgresql is ALSO broken (same root cause) - so this uses the
+# official `postgres:16-alpine` image directly instead, single replica,
+# ephemeral storage (fine for this POC - not meant to survive restarts).
+#
+# http.tlsSecret added later this session (see keycloak-tls.yaml) - Envoy
+# Gateway's OIDC SecurityPolicy hard-rejects a plain http:// issuer URL, so
+# Keycloak needs real (self-signed is fine) HTTPS for the chat-dashboard
+# OIDC wiring. httpEnabled stays true too - internal cluster traffic that
+# doesn't go through the OIDC path still uses plain HTTP.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-db-secret
+  namespace: keycloak
+type: Opaque
+stringData:
+  username: keycloak
+  password: keycloak-poc-password
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-db
+  namespace: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-db
+  template:
+    metadata:
+      labels:
+        app: postgres-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: keycloak
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: keycloak-db-secret, key: username }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: keycloak-db-secret, key: password }
+          ports:
+            - containerPort: 5432
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-db
+  namespace: keycloak
+spec:
+  selector:
+    app: postgres-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: k8s.keycloak.org/v2beta1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  instances: 1
+  db:
+    vendor: postgres
+    host: postgres-db
+    usernameSecret:
+      name: keycloak-db-secret
+      key: username
+    passwordSecret:
+      name: keycloak-db-secret
+      key: password
+  http:
+    httpEnabled: true
+    tlsSecret: keycloak-tls-secret
+  hostname:
+    strict: false
+    strictBackchannel: false
+  # Operator defaults to request 1700Mi/limit 2Gi - real observed usage on
+  # this laptop is 725Mi; trimmed with margin for real OIDC traffic (admin
+  # console + token flows), not just idle, per the "minimal footprint on
+  # this laptop" directive.
+  resources:
+    requests:
+      memory: 900Mi
+    limits:
+      memory: 1280Mi
