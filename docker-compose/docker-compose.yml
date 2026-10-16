@@ -146,6 +146,10 @@ services:
       OAUTH2_PROXY_EMAIL_DOMAINS: "*"
       OAUTH2_PROXY_UPSTREAMS: http://chat-ui:8080
       OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+      # default 30s cuts off streaming SSE chat responses mid-stream -> 502
+      # (confirmed: browser POST failed at exactly 30.004s while the upstream
+      # chat proxy itself returned 200)
+      OAUTH2_PROXY_UPSTREAM_TIMEOUT: 30m
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:?generate via python3 -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"}
       OAUTH2_PROXY_COOKIE_SECURE: "false"  # plain http for this local demo - set true behind real TLS
 
